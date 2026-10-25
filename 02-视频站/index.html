@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>鲸鱼放映室 · 在线视频</title>
+<style>
+  :root{
+    --bg:#0e1220; --panel:#161b2e; --ink:#e8edf7; --muted:#9aa6c2;
+    --line:#25304d; --brand:#67dce7; --ad:#f5b301;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 600px at 50% -10%,#1b2440,#0e1220 60%);
+       color:var(--ink);font:16px/1.65 "Segoe UI",system-ui,"Microsoft YaHei",sans-serif;
+       min-height:100vh;padding:24px}
+  .wrap{max-width:960px;margin:0 auto}
+  header{display:flex;align-items:baseline;gap:12px;margin-bottom:16px}
+  h1{margin:0;font-size:22px;letter-spacing:.5px}
+  .tag{font-size:12px;color:var(--muted);border:1px solid var(--line);
+       padding:2px 8px;border-radius:999px}
+  .player{position:relative;background:#000;border-radius:14px;overflow:hidden;
+          border:1px solid var(--line);box-shadow:0 18px 45px rgba(0,0,0,.45)}
+  video{display:block;width:100%;max-height:62vh;background:#000}
+  /* ===== 广告层 ===== */
+  .ad-layer{position:absolute;inset:0;display:none;place-items:center;
+            background:rgba(6,9,18,.92);z-index:5}
+  .ad-layer.show{display:grid}
+  .ad-card{width:min(560px,90%);
+           background:linear-gradient(135deg,#1a2138,#232c49);border:1px solid #33406b;
+           border-radius:16px;padding:26px 24px;text-align:center;position:relative;
+           animation:adIn .35s ease}
+  @keyframes adIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+  .ad-badge{position:absolute;top:10px;left:12px;font-size:12px;color:#161b2e;
+            background:var(--ad);border-radius:6px;padding:2px 8px;font-weight:700}
+  .ad-title{font-size:20px;font-weight:700;margin:10px 0 6px;color:#fff}
+  .ad-text{color:var(--muted);font-size:14px;margin:0}
+  .ad-skip{position:absolute;right:12px;bottom:12px;border:0;border-radius:8px;
+           padding:8px 14px;font:inherit;font-size:13px;cursor:pointer;
+           background:#2b3555;color:#c8d2ea}
+  .ad-skip:disabled{opacity:.55;cursor:not-allowed}
+  .ad-skip.ready{background:#fff;color:#111}
+  /* ===== 控制条 ===== */
+  .bar{display:flex;flex-wrap:wrap;gap:12px;align-items:center;
+       margin-top:14px;padding:12px 14px;background:var(--panel);
+       border:1px solid var(--line);border-radius:12px}
+  .bar button,.bar label.file{cursor:pointer;border:1px solid var(--line);
+       background:#1d2440;color:var(--ink);border-radius:9px;padding:8px 14px;font:inherit;font-size:14px}
+  .bar button:hover,.bar label.file:hover{border-color:var(--brand);color:var(--brand)}
+  .bar input[type=file]{display:none}
+  .grow{flex:1}
+  .meter{font-size:13px;color:var(--muted)}
+  .meter b{color:var(--brand);font-variant-numeric:tabular-nums}
+  .tip{margin-top:14px;font-size:13px;color:var(--muted);line-height:1.8}
+  .tip code{background:#1a2138;border:1px solid var(--line);border-radius:6px;
+            padding:1px 6px;color:#cfe0ff}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>鲸鱼放映室</h1>
+    <span class="tag">视频播放 · 定时插播广告</span>
+  </header>
+
+  <div class="player">
+    <video id="video" playsinline preload="metadata"
+           poster="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='960' height='540'><rect width='100%' height='100%' fill='%230e1220'/><text x='50%' y='50%' fill='%239aa6c2' font-size='22' text-anchor='middle' dy='.4em'>选择视频或点播放</text></svg>">
+      <!-- 换成你自己的视频：<source src="my-video.mp4" type="video/mp4"> -->
+      <source src="https://www.w3schools.com/html/mov_bbb.mp4" type="video/mp4">
+      你的浏览器不支持 HTML5 video。
+    </video>
+
+    <!-- 广告覆盖层 -->
+    <div class="ad-layer" id="adLayer" role="dialog" aria-label="广告">
+      <div class="ad-card">
+        <span class="ad-badge">广告</span>
+        <h2 class="ad-title" id="adTitle">广告位招租</h2>
+        <p class="ad-text" id="adText">这里是插播广告，稍等几秒就好。</p>
+        <button class="ad-skip" id="adSkip" disabled>跳过广告（5s）</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="bar">
+    <button id="playBtn">播放</button>
+    <button id="pauseBtn">暂停</button>
+    <label class="file">
+      选择本地视频
+      <input type="file" id="fileInput" accept="video/*">
+    </label>
+    <div class="grow"></div>
+    <span class="meter">下次广告：<b id="nextAd">180</b> 秒</span>
+  </div>
+
+  <p class="tip">
+    规则：每播放 <code>180</code> 秒插一次广告，广告 8 秒，5 秒后可跳过；暂停计时也暂停。
+    想改频率，打开本文件搜索 <code>AD_INTERVAL_SECONDS</code>。
+  </p>
+</div>
+
+<script>
+/* ===================== 可配置参数 ===================== */
+const AD_INTERVAL_SECONDS = 180;  // 每播放多少秒插一次广告
+const AD_DURATION_SECONDS = 8;    // 广告时长
+const SKIP_AFTER_SECONDS  = 5;    // 多少秒后允许跳过
+
+/* 广告素材：随机轮播，可随意改文案 */
+const ADS = [
+  { title: "深海咖啡 · 今晚八点第二杯半价", text: "熬夜看视频的，来杯热的吧。" },
+  { title: "鲸鱼自习室 · 24 小时开放", text: "安静、有网、有插座，考试周友好。" },
+  { title: "轻量云服务器 9 元起", text: "部署你的第一个网站，从今天开始。" },
+  { title: "小肥鱼表情包 · 限量上新", text: "扫码领取，先到先得。" }
+];
+
+/* ===================== 元素 ===================== */
+const video   = document.getElementById("video");
+const adLayer = document.getElementById("adLayer");
+const adTitle = document.getElementById("adTitle");
+const adText  = document.getElementById("adText");
+const adSkip  = document.getElementById("adSkip");
+const nextAdEl= document.getElementById("nextAd");
+
+/* ===================== 状态 ===================== */
+let watchedSeconds = 0;   // 累计「播放」时长，暂停不涨
+let adPlaying = false;
+let adTimer = null;
+let skipTimer = null;
+let lastTick = 0;
+
+/* ===================== 广告逻辑 ===================== */
+function showAd() {
+  if (adPlaying) return;
+  adPlaying = true;
+
+  const ad = ADS[Math.floor(Math.random() * ADS.length)];
+  adTitle.textContent = ad.title;
+  adText.textContent  = ad.text;
+
+  video.pause();
+  adLayer.classList.add("show");
+
+  // 跳过按钮倒计时
+  let left = SKIP_AFTER_SECONDS;
+  adSkip.disabled = true;
+  adSkip.classList.remove("ready");
+  adSkip.textContent = `跳过广告（${left}s）`;
+
+  skipTimer = setInterval(() => {
+    left -= 1;
+    if (left <= 0) {
+      clearInterval(skipTimer);
+      adSkip.disabled = false;
+      adSkip.classList.add("ready");
+      adSkip.textContent = "跳过广告";
+    } else {
+      adSkip.textContent = `跳过广告（${left}s）`;
+    }
+  }, 1000);
+
+  // 到点自动关闭
+  adTimer = setTimeout(closeAd, AD_DURATION_SECONDS * 1000);
+}
+
+function closeAd() {
+  clearTimeout(adTimer);
+  clearInterval(skipTimer);
+  adLayer.classList.remove("show");
+  adPlaying = false;
+  watchedSeconds = 0;          // 看完广告重新累计
+  updateMeter();
+  video.play().catch(() => {}); // 自动续播（浏览器可能拦截，用户点一下即可）
+}
+
+adSkip.addEventListener("click", () => {
+  if (!adSkip.disabled) closeAd();
+});
+
+/* ===================== 计时 ===================== */
+function updateMeter() {
+  const left = Math.max(0, AD_INTERVAL_SECONDS - Math.floor(watchedSeconds));
+  nextAdEl.textContent = left;
+}
+
+function tick() {
+  if (adPlaying || video.paused || video.ended) { lastTick = 0; return; }
+  const now = performance.now();
+  if (lastTick) watchedSeconds += (now - lastTick) / 1000;
+  lastTick = now;
+
+  updateMeter();
+  if (watchedSeconds >= AD_INTERVAL_SECONDS) showAd();
+}
+
+setInterval(tick, 250);
+video.addEventListener("play",  () => { lastTick = performance.now(); });
+video.addEventListener("pause", () => { lastTick = 0; });
+
+/* ===================== 基本控制 ===================== */
+document.getElementById("playBtn").addEventListener("click", () => {
+  if (adPlaying) return;              // 广告期间不许播
+  video.play().catch(() => {});
+});
+document.getElementById("pauseBtn").addEventListener("click", () => video.pause());
+
+document.getElementById("fileInput").addEventListener("change", e => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  video.src = URL.createObjectURL(file);
+  watchedSeconds = 0;
+  updateMeter();
+  video.play().catch(() => {});
+});
+
+updateMeter();
+</script>
+</body>
+</html>

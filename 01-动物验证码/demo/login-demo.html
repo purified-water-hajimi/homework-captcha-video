@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>选课系统 · 登录（动物验证码）</title>
+<style>
+  :root{
+    --bg:#f4f6f8; --card:#fff; --ink:#243042; --muted:#657184;
+    --line:#d6dde6; --brand:#245bd6; --ok:#0f7b3f; --err:#b42318;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:24px;background:var(--bg);color:var(--ink);
+       font:16px/1.6 "Segoe UI",system-ui,-apple-system,"Microsoft YaHei",sans-serif}
+  main{max-width:430px;margin:6vh auto;padding:30px;background:var(--card);
+       border-radius:14px;box-shadow:0 10px 30px rgba(20,40,70,.08)}
+  h1{margin:0 0 6px;font-size:25px}
+  .sub{margin:0;color:var(--muted);font-size:14px}
+  label{display:block;margin-top:18px;font-weight:600;font-size:14px}
+  input,button{width:100%;font:inherit;border-radius:8px}
+  input{margin-top:6px;padding:11px 12px;border:1px solid var(--line);background:#fbfcfe}
+  input:focus{outline:2px solid #c7d7ff;border-color:var(--brand)}
+  button{padding:12px;border:0;cursor:pointer;font-weight:600}
+  #submitButton{margin-top:22px;background:var(--brand);color:#fff}
+  #submitButton:disabled{opacity:.6;cursor:not-allowed}
+  .captcha-row{margin-top:18px;padding:14px;border:1px solid var(--line);
+               border-radius:10px;background:#fbfcfe}
+  .captcha-head{display:flex;justify-content:space-between;align-items:center;gap:10px}
+  .captcha-head span{font-size:13px;font-weight:600}
+  .refresh{padding:6px 10px;background:#eaf0fb;color:var(--brand);
+           border-radius:7px;font-size:13px;width:auto}
+  #captchaCanvas{margin-top:10px;width:100%;height:96px;border-radius:8px;
+                 background:#f0f3f8;display:block;cursor:pointer}
+  .hint{margin:8px 0 0;font-size:13px;color:var(--muted)}
+  .msg{margin-top:14px;padding:10px 12px;border-radius:8px;font-size:14px}
+  .msg.ok{background:#e8f6ee;color:var(--ok)}
+  .msg.err{background:#fdeceb;color:var(--err)}
+  .hidden{display:none}
+  footer{margin-top:18px;font-size:12px;color:var(--muted);text-align:center}
+</style>
+</head>
+<body>
+<main>
+  <h1>选课系统</h1>
+  <p class="sub">请先完成动物验证，再输入账号登录。</p>
+
+  <form id="loginForm" novalidate>
+    <label for="username">用户名</label>
+    <input id="username" name="username" autocomplete="username" placeholder="student01" required>
+
+    <label for="password">密码</label>
+    <input id="password" name="password" type="password" autocomplete="current-password"
+           placeholder="123456" required>
+
+    <!-- ===== 动物验证码 ===== -->
+    <div class="captcha-row">
+      <div class="captcha-head">
+        <span id="captchaTip">动物验证码</span>
+        <button type="button" class="refresh" id="refreshCaptcha">换一张</button>
+      </div>
+      <canvas id="captchaCanvas" width="780" height="200" title="点击可换一张"></canvas>
+      <p class="hint" id="captchaHint">看图里是哪只动物，把它的名字填在下面。</p>
+      <input id="captchaInput" name="captcha" autocomplete="off"
+             placeholder="例如：猫 / 狗 / 熊猫" aria-describedby="captchaHint">
+    </div>
+
+    <button type="button" id="submitButton"><span>进入学习空间</span></button>
+  </form>
+
+  <div id="notice" class="msg ok hidden"></div>
+  <div id="error" class="msg err hidden" role="alert"></div>
+
+  <footer>演示页 · 验证码在前端生成，正式版由服务器生成并校验</footer>
+</main>
+
+<script>
+/* =========================================================
+   动物验证码（演示版：前端生成 + 前端校验）
+   正式接入时，图片与答案由服务器生成，答案存 Session，
+   前端只负责展示和提交用户输入 —— 见 java/CaptchaServlet.java
+   ========================================================= */
+const ANIMALS = [
+  { name: "猫",     emoji: "🐱", aliases: ["猫", "猫咪", "小猫", "cat"] },
+  { name: "狗",     emoji: "🐶", aliases: ["狗", "狗狗", "小狗", "dog"] },
+  { name: "熊猫",   emoji: "🐼", aliases: ["熊猫", "panda", "猫熊"] },
+  { name: "兔子",   emoji: "🐰", aliases: ["兔子", "兔", "小兔", "rabbit"] },
+  { name: "狐狸",   emoji: "🦊", aliases: ["狐狸", "狐", "fox"] },
+  { name: "青蛙",   emoji: "🐸", aliases: ["青蛙", "蛙", "frog"] },
+  { name: "老虎",   emoji: "🐯", aliases: ["老虎", "虎", "tiger"] },
+  { name: "狮子",   emoji: "🦁", aliases: ["狮子", "狮", "lion"] },
+  { name: "考拉",   emoji: "🐨", aliases: ["考拉", "树袋熊", "koala"] },
+  { name: "企鹅",   emoji: "🐧", aliases: ["企鹅", "penguin"] }
+];
+
+const canvas = document.getElementById("captchaCanvas");
+const ctx = canvas.getContext("2d");
+const answerInput = document.getElementById("captchaInput");
+const captchaTip = document.getElementById("captchaTip");
+const refreshBtn = document.getElementById("refreshCaptcha");
+
+let answer = null;      // 当前正确答案（动物对象）
+let verified = false;   // 是否已通过验证
+
+function rand(min, max) { return Math.random() * (max - min) + min; }
+function pick(list) { return list[Math.floor(Math.random() * list.length)]; }
+
+/* 画一张验证码：随机动物 + 干扰线 + 噪点 + 轻微旋转 */
+function drawCaptcha() {
+  const animal = pick(ANIMALS);
+  answer = animal;
+  verified = false;
+
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  // 背景渐变
+  const g = ctx.createLinearGradient(0, 0, w, h);
+  g.addColorStop(0, "#eef3fb");
+  g.addColorStop(1, "#e3ebf8");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+
+  // 干扰线
+  for (let i = 0; i < 6; i++) {
+    ctx.strokeStyle = `rgba(${rand(90,160)|0},${rand(90,160)|0},${rand(140,200)|0},.45)`;
+    ctx.lineWidth = rand(1, 2.4);
+    ctx.beginPath();
+    ctx.moveTo(rand(0, w), rand(0, h));
+    ctx.bezierCurveTo(rand(0, w), rand(0, h), rand(0, w), rand(0, h), rand(0, w), rand(0, h));
+    ctx.stroke();
+  }
+
+  // 中心动物（大）
+  ctx.save();
+  ctx.translate(w / 2, h / 2);
+  ctx.rotate(rand(-0.12, 0.12));
+  ctx.font = `${rand(120, 150) | 0}px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.globalAlpha = 0.96;
+  ctx.fillText(animal.emoji, 0, 6);
+  ctx.restore();
+
+  // 旁边几个小动物（干扰项，不算答案）
+  const others = ANIMALS.filter(a => a !== animal);
+  for (let i = 0; i < 3; i++) {
+    const ghost = pick(others);
+    ctx.save();
+    ctx.globalAlpha = 0.28;
+    ctx.translate(rand(70, w - 70), rand(45, h - 45));
+    ctx.rotate(rand(-0.5, 0.5));
+    ctx.font = `${rand(40, 62) | 0}px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(ghost.emoji, 0, 0);
+    ctx.restore();
+  }
+
+  // 噪点
+  for (let i = 0; i < 260; i++) {
+    ctx.fillStyle = `rgba(80,110,150,${rand(0.05, 0.22)})`;
+    ctx.fillRect(rand(0, w), rand(0, h), rand(1, 2.2), rand(1, 2.2));
+  }
+
+  captchaTip.textContent = "动物验证码 · 请辨认图中最大的那只动物";
+  answerInput.value = "";
+  setMsg("error", "");
+}
+
+/* 校验用户输入：允许别名、忽略大小写和空格 */
+function checkAnswer(raw) {
+  if (!answer) return false;
+  const value = String(raw || "").trim().toLowerCase().replace(/\s+/g, "");
+  if (!value) return false;
+  return answer.aliases.some(alias => alias.toLowerCase() === value);
+}
+
+function setMsg(kind, text) {
+  const okBox = document.getElementById("notice");
+  const errBox = document.getElementById("error");
+  okBox.classList.add("hidden");
+  errBox.classList.add("hidden");
+  if (!text) return;
+  if (kind === "ok") { okBox.textContent = text; okBox.classList.remove("hidden"); }
+  else { errBox.textContent = text; errBox.classList.remove("hidden"); }
+}
+
+/* ===== 交互 ===== */
+refreshBtn.addEventListener("click", drawCaptcha);
+canvas.addEventListener("click", drawCaptcha);
+
+const submitButton = document.getElementById("submitButton");
+const usernameInput = document.getElementById("username");
+const passwordInput = document.getElementById("password");
+let pending = false;
+
+document.getElementById("loginForm").addEventListener("submit", e => e.preventDefault());
+
+submitButton.addEventListener("click", () => {
+  if (pending) return;
+
+  const user = usernameInput.value.trim();
+  const pass = passwordInput.value;
+
+  if (!user || !pass) { setMsg("error", "请填写用户名和密码。"); return; }
+
+  // ① 先校验动物验证码
+  if (!checkAnswer(answerInput.value)) {
+    setMsg("error", "动物验证码不对，请再看一眼图（答案示例：" + (answer ? "…" : "") + "）。");
+    drawCaptcha();                       // 答错自动换一张
+    answerInput.focus();
+    return;
+  }
+
+  if (verified) return;
+  verified = true;
+  pending = true;
+  submitButton.disabled = true;
+  submitButton.querySelector("span").textContent = "正在进入…";
+
+  // ② 验证码通过后再走登录接口（演示版这里直接模拟成功）
+  setTimeout(() => {
+    pending = false;
+    submitButton.disabled = false;
+    submitButton.querySelector("span").textContent = "进入学习空间";
+    setMsg("ok", `验证通过（${answer.name}），模拟登录成功。正式版此处会调用 /api/login。`);
+  }, 700);
+});
+
+/* 首次进入画一张 */
+drawCaptcha();
+</script>
+</body>
+</html>
